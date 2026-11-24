@@ -1271,4 +1271,101 @@ def seed_real_data() -> dict[str, int]:
         })
     counts["alerts"] = len(alerts)
 
+    counts.update(seed_reconciliation_data())
+
     return counts
+
+
+def seed_reconciliation_data() -> dict[str, int]:
+    """生成对账追溯示例：一张已作废的 100 快照、一份替代快照及上周已发送记录。
+
+    示例数据保持「历史已发送 = 100」「替代快照待核实」的初始状态，
+    便于在页面上完整走一遍作废 → 替代确认 → 核实 → 正式报送。
+    """
+    report_id = db.insert("reports", {
+        "report_name": "月末对账报告",
+        "metric_ids": "[]",
+        "report_period": "2026-10月度",
+        "output_format": "json",
+        "auto_send": 1,
+        "status": "已发布",
+    })
+
+    def payment_content(value: float) -> str:
+        return json.dumps({
+            "report_name": "月末对账报告",
+            "sections": [{
+                "metric_name": "付款额", "metric_type": "counter", "unit": "元",
+                "current_value": value, "status": "已保存",
+            }],
+        }, ensure_ascii=False)
+
+    voided_id = db.insert("snapshots", {
+        "snapshot_name": "10月付款额对账快照",
+        "report_id": report_id,
+        "snapshot_content": payment_content(100),
+        "original_content": payment_content(100),
+        "status": "已作废",
+        "verification_status": "已核实",
+        "verified_at": "2026-10-31T18:00:00",
+        "verified_by": "前班财务主管",
+        "void_reason": "重复入账：付款流水被重复计入，付款额虚高",
+        "voided_at": "2026-11-24T08:30:00",
+        "voided_by": "财务主管",
+        "reconciliation_period": "2026-10月度",
+    })
+    replacement_id = db.insert("snapshots", {
+        "snapshot_name": "10月付款额对账快照(去重后)",
+        "report_id": report_id,
+        "snapshot_content": payment_content(100),
+        "original_content": payment_content(100),
+        "status": "已保存",
+        "verification_status": "待核实",
+        "reconciliation_period": "2026-10月度",
+    })
+    db.update("snapshots", {
+        "replaced_by": replacement_id,
+        "replacement_reason": "改用去重后的付款明细重算",
+        "replacement_status": "待核实替代",
+        "replacement_confirmed_at": "2026-11-24T08:35:00",
+    }, "id=?", [voided_id])
+    db.update("snapshots", {"replaces_snapshot_id": voided_id}, "id=?", [replacement_id])
+
+    # 上周已发送：内容固定为 100，后续作废 / 替代 / 核实都不会改写它。
+    last_week_output = db.insert("report_outputs", {
+        "report_id": report_id,
+        "output_content": payment_content(100),
+        "snapshot_id": voided_id,
+        "delivery_status": "已发送",
+        "sent_at": "2026-11-17T09:00:00",
+        "provenance": json.dumps({"source": "reconciliation_snapshot", "snapshot_id": voided_id},
+                                 ensure_ascii=False),
+    })
+    last_week_delivery = db.insert("report_deliveries", {
+        "report_id": report_id,
+        "output_id": last_week_output,
+        "snapshot_id": voided_id,
+        "kind": "正式对账报告",
+        "is_formal_voucher": 1,
+        "content": payment_content(100),
+        "content_original": payment_content(100),
+        "delivery_status": "已发送",
+        "shift": "上周",
+        "operator": "前班财务主管",
+        "sent_at": "2026-11-17T09:00:00",
+    })
+    db.update("report_outputs", {"sent_delivery_id": last_week_delivery},
+              "id=?", [last_week_output])
+
+    # 本班待发版本：仍引用已作废的 100 快照，因此校验会拦截正式报送。
+    db.insert("report_outputs", {
+        "report_id": report_id,
+        "output_content": payment_content(100),
+        "snapshot_id": voided_id,
+        "delivery_status": "待发送",
+        "provenance": json.dumps({"source": "reconciliation_snapshot", "snapshot_id": voided_id},
+                                 ensure_ascii=False),
+    })
+
+    return {"reconciliation_reports": 1, "reconciliation_snapshots": 2,
+            "reconciliation_deliveries": 1}

@@ -173,9 +173,20 @@ export const MODULES: ModuleMeta[] = [
     entity: "快照记录",
     desc: "保存报告的完整数据快照并支持历史版本对比",
     fields: ["快照名称", "所属报告", "快照时间", "数据摘要", "差异对比"],
-    statuses: ["已保存", "已对比", "有差异"],
-    actions: ["生成快照", "对比快照"],
+    statuses: ["已保存", "已对比", "有差异", "已作废"],
+    actions: ["生成快照", "对比快照", "作废快照", "替代确认", "核实快照"],
     actionTargets: {"生成快照": "已保存", "对比快照": "已对比"},
+    actionRemarks: {
+      "作废快照": [{ key: "reason", label: "作废原因", required: true }],
+      "替代确认": [
+        { key: "replacement_snapshot_id", label: "替代快照ID", required: true },
+        { key: "reason", label: "替代原因", required: true },
+      ],
+      "核实快照": [
+        { key: "note", label: "核实说明", required: true },
+        { key: "verified_value", label: "核实值（选填）" },
+      ],
+    },
     metrics: ["快照总数", "已对比快照", "有差异快照"],
   },
   {

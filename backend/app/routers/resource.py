@@ -76,7 +76,8 @@ def export_entries(
 @router.get("/{module}/{entry_id}", response_model=dict)
 def get_entry(module: str, entry_id: int) -> dict[str, Any]:
     service = require_service(module)
-    entry = service.get_entry(entry_id)
+    describe = getattr(service, "describe_entry", None)
+    entry = describe(entry_id) if describe else service.get_entry(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"{service.ENTITY} {entry_id} 不存在或已归档")
     return entry
@@ -94,5 +95,5 @@ def create_entry(module: str, payload: EntryPayload) -> ActionResult:
 @router.post("/{module}/{entry_id}/actions", response_model=ActionResult)
 def run_action(module: str, entry_id: int, payload: ActionPayload) -> ActionResult:
     service = require_service(module)
-    entry, message = service.run_action(entry_id, payload.action.strip())
+    entry, message = service.run_action(entry_id, payload.action.strip(), payload.remark)
     return ActionResult(ok=entry is not None, message=message, entry=entry)

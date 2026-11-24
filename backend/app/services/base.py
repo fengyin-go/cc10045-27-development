@@ -94,7 +94,8 @@ class BaseModuleService:
         for field in self.LIST_FIELDS:
             col = _to_column_name(field)
             data[col] = values.get(field, "")
-        if "name" not in data and self.LIST_FIELDS:
+        # 只有表里确实存在 name 列时才补写兼容列，避免登记时报 no column named name。
+        if "name" not in data and self.LIST_FIELDS and _table_has_column(table, "name"):
             data["name"] = values.get(self.LIST_FIELDS[0], "")
         data["status"] = self.STATUS_ORDER[0]
 
@@ -102,7 +103,7 @@ class BaseModuleService:
         entry = db.fetchone(f"SELECT * FROM {table} WHERE id=?", [entry_id])
         return entry, []
 
-    def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
+    def run_action(self, entry_id: int, action: str, remark: str | None = None) -> tuple[dict[str, Any] | None, str]:
         entry = self.get_entry(entry_id)
         if entry is None:
             return None, f"{self.ENTITY} {entry_id} 不存在或已归档"
@@ -127,6 +128,14 @@ class BaseModuleService:
             "by_status": by_status,
             "abnormal": 0,
         }
+
+
+def _table_has_column(table: str, column: str) -> bool:
+    """检查数据表是否含有指定列，用于兼容不同模块的表结构。"""
+    try:
+        return any(row["name"] == column for row in db.fetchall(f"PRAGMA table_info({table})"))
+    except Exception:
+        return False
 
 
 def _to_column_name(chinese_field: str) -> str:

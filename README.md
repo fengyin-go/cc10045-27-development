@@ -18,6 +18,7 @@
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
 │   ├── app/services/base.py     共享服务骨架
+│   ├── app/routers/reconciliation.py  对账追溯专用接口
 │   └── app/store.py          内存数据仓库与示例数据
 ├── .gitignore
 └── docker-compose.yml
@@ -81,3 +82,25 @@ npm run dev
 
 领域：数据工程
 子方向：数据分析与数据应用
+
+
+## 对账追溯
+
+`report_snapshot` 在快照对比之外提供完整的对账快照生命周期：
+
+- **作废**：`POST /api/reconciliation/snapshots/{id}/void`，必须填写作废原因；已作废快照
+  不能再为新正式报送提供数值，原内容保留在 `original_content` 里可查。
+- **替代确认**：`POST /api/reconciliation/snapshots/{id}/replacement`，保存替代快照与替代原因；
+  替代快照未核实时会明确标记，不能用于正式报送。
+- **核实**：`POST /api/reconciliation/snapshots/{id}/verify`，可写入更正后的数值（如 100 → 94）。
+- **待发版本校验**：`GET /api/reconciliation/reports/{id}/pending` 返回每个待发版本引用的
+  对账快照、是否可正式提交以及拦截原因。
+- **例行报送**：`POST /api/reconciliation/reports/{id}/submit-routine`，仅当对账数据未作废、
+  已核实且替代关系明确时作为正式对账提交，并记录实际采用的对账数据出处。
+- **催核通知**：`POST /api/reconciliation/reports/{id}/notice`，带作废原因、列出受影响指标，
+  标记为非正式付款凭证，不改变待发报告与历史记录。
+- **暂停 / 恢复**：`POST /api/reconciliation/outputs/{id}/pause|resume`，等待替代快照核实。
+
+历史不可变：每次发送都会在 `report_deliveries` 落一份独立副本，之后的作废、替代、核实、
+重复报送都不会改写它；重复作废或重复替代确认是幂等的。前端入口在侧边栏「对账追溯」
+（`/reconciliation`），报告快照页面也提供作废 / 替代确认 / 核实按钮。

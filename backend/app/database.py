@@ -353,7 +353,85 @@ DDL_STATEMENTS = [
         daily_calls INTEGER DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+
+    # ==================== Reconciliation / Delivery Tier ====================
+    # 已发送内容保存独立不可变副本：之后快照作废、替代或重新核实都不改写这里的历史。
+    """CREATE TABLE IF NOT EXISTS report_deliveries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        output_id INTEGER,
+        snapshot_id INTEGER,
+        kind TEXT NOT NULL DEFAULT '正式对账报告',
+        is_formal_voucher INTEGER NOT NULL DEFAULT 1,
+        content TEXT NOT NULL DEFAULT '{}',
+        content_original TEXT,
+        void_snapshot_id INTEGER,
+        reference_reason TEXT,
+        recipients TEXT,
+        delivery_status TEXT NOT NULL DEFAULT '已发送',
+        shift TEXT,
+        operator TEXT,
+        sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_delivery_report ON report_deliveries(report_id)",
+    "CREATE INDEX IF NOT EXISTS idx_delivery_snapshot ON report_deliveries(snapshot_id)",
+
+    """CREATE TABLE IF NOT EXISTS reconciliation_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_id INTEGER,
+        report_id INTEGER,
+        output_id INTEGER,
+        delivery_id INTEGER,
+        event_type TEXT NOT NULL,
+        reason TEXT,
+        detail TEXT,
+        operator TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_recon_event_snapshot ON reconciliation_events(snapshot_id)",
 ]
+
+# 运行期增量列：旧库升级时补齐，不丢已有快照和已发送记录。
+_MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
+    "snapshots": {
+        "verification_status": "TEXT NOT NULL DEFAULT '待核实'",
+        "verification_note": "TEXT",
+        "verified_at": "TEXT",
+        "verified_by": "TEXT",
+        "original_content": "TEXT",
+        "void_reason": "TEXT",
+        "voided_at": "TEXT",
+        "voided_by": "TEXT",
+        "replaced_by": "INTEGER",
+        "replacement_reason": "TEXT",
+        "replacement_status": "TEXT",
+        "replacement_confirmed_at": "TEXT",
+        "replaces_snapshot_id": "INTEGER",
+        "reconciliation_period": "TEXT",
+        "source_output_id": "INTEGER",
+    },
+    "report_outputs": {
+        "snapshot_id": "INTEGER",
+        "delivery_status": "TEXT NOT NULL DEFAULT '待发送'",
+        "sent_delivery_id": "INTEGER",
+        "paused_reason": "TEXT",
+        "paused_at": "TEXT",
+        "sent_at": "TEXT",
+        "provenance": "TEXT",
+    },
+}
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """幂等补齐增量列，兼容已存在的本地数据库。"""
+    for table, columns in _MIGRATION_COLUMNS.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
 class AnalyticsDB:
@@ -373,6 +451,7 @@ class AnalyticsDB:
         conn.execute("PRAGMA busy_timeout=5000")
         for stmt in DDL_STATEMENTS:
             conn.execute(stmt)
+        _ensure_columns(conn)
         conn.commit()
         conn.close()
 

@@ -60,8 +60,7 @@
             >
               {{ action }}
             </button>
-          </td>
-        </tr>
+          </td>        </tr>
         <tr v-if="!rows.length">
           <td :colspan="meta.fields.length + 2" class="empty-state">
             暂无{{ meta.name }}数据，可先登记{{ meta.entity }}
@@ -82,6 +81,25 @@
           <button class="btn primary" data-testid="submit-create" type="submit" :disabled="creating">
             {{ creating ? '提交中…' : '确认登记' }}
           </button>
+        </div>
+      </form>
+    </div>
+
+    <div v-if="remarkDialog" class="modal-backdrop" data-testid="remark-modal">
+      <form class="modal" @submit.prevent="submitRemark">
+        <h3>{{ remarkDialog.action }} · 快照 #{{ remarkDialog.row.id }}</h3>
+        <p class="page-desc">该动作需要补充原因或关联快照，提交后会记录到对账追溯日志。</p>
+        <label v-for="field in remarkDialog.fields" :key="field.key" class="create-field">
+          <span>{{ field.label }}</span>
+          <input
+            v-model="remarkDialog.values[field.key]"
+            :data-testid="`remark-${field.key}`"
+            :required="field.required"
+          />
+        </label>
+        <div class="page-actions">
+          <button class="btn" type="button" @click="remarkDialog = null">取消</button>
+          <button class="btn primary" data-testid="submit-remark" type="submit">确认</button>
         </div>
       </form>
     </div>
@@ -115,6 +133,7 @@ const filterFields = meta.fields.slice(0, 3)
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
+const remarkDialog = ref<{ action: string; row: EntryRow; fields: { key: string; label: string; required?: boolean }[]; values: Record<string, string> } | null>(null)
 const stats = computed(() => [
   { label: meta.metrics[0], value: total.value },
   { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
@@ -167,8 +186,42 @@ async function submitCreate() {
 
 async function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
+  const remarkFields = meta.actionRemarks?.[action]
+  if (remarkFields?.length) {
+    remarkDialog.value = {
+      action,
+      row,
+      fields: remarkFields,
+      values: Object.fromEntries(remarkFields.map((field) => [field.key, ''])),
+    }
+    return
+  }
+  await applyActionToRow(action, row)
+}
+
+async function submitRemark() {
+  if (!remarkDialog.value) return
+  const { action, row, values, fields } = remarkDialog.value
+  const missing = fields.filter((field) => field.required && !values[field.key]?.trim())
+  if (missing.length) {
+    errorMessage.value = `请填写：${missing.map((field) => field.label).join('、')}`
+    return
+  }
+  const payload: Record<string, unknown> = Object.fromEntries(
+    Object.entries(values).filter(([, value]) => String(value ?? '').trim() !== ''),
+  )
+  if (payload.verified_value !== undefined) payload.verified_value = Number(payload.verified_value)
+  if (payload.replacement_snapshot_id !== undefined) {
+    payload.replacement_snapshot_id = Number(payload.replacement_snapshot_id)
+  }
+  remarkDialog.value = null
+  await applyActionToRow(action, row, JSON.stringify(payload))
+}
+
+async function applyActionToRow(action: string, row: EntryRow, remark?: string) {
+  errorMessage.value = ''
   try {
-    const result = await applyAction(meta.key, Number(row.id), action)
+    const result = await applyAction(meta.key, Number(row.id), action, remark)
     if (!result.ok) throw new Error(result.message)
     await reload()
   } catch (error) {

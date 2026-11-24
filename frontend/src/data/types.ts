@@ -17,6 +17,8 @@ export type ModuleMeta = {
   statuses: string[]
   actions: string[]
   actionTargets: Record<string, string>
+  /** 需要在动作执行前填写的备注字段，例如作废原因、替代快照ID。 */
+  actionRemarks?: Record<string, { key: string; label: string; required?: boolean }[]>
   metrics: string[]
 }
 
